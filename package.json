@@ -1,0 +1,14 @@
+{
+  "name": "poolrooms-map",
+  "version": "0.1.0",
+  "description": "Poolrooms / 池核 style first-person three.js map",
+  "scripts": {
+    "start": "python -m http.server 8123",
+    "serve": "python -m http.server 8123"
+  },
+  "type": "module",
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "private": true
+}
