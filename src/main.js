@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createMaterials } from './materials.js';
+import { createMaterials, applyUnderwaterTint } from './materials.js';
 import { createEnvironmentTexture } from './textures.js';
 import { buildWorld } from './world.js';
 import { Water } from './water.js';
 import { Player } from './player.js';
 import { createPost } from './postfx.js';
 import { PoolAudio } from './audio.js';
+import { WATER_Y, WATER_MAX_DEPTH } from './config.js';
 
 const app = document.getElementById('app');
 const loaderEl = document.getElementById('loader');
@@ -70,10 +71,27 @@ camera.lookAt(-2, 1.25, -6);
 const materials = createMaterials(renderer);
 const world = buildWorld(scene, materials);
 
+/* Submerged opaque geometry needs a subtle water absorption tint. */
+{
+  const tinted = new Set();
+  world.root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of list) {
+      if (tinted.has(mat)) continue;
+      if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) {
+        tinted.add(mat);
+        applyUnderwaterTint(mat, WATER_Y);
+      }
+    }
+  });
+}
+
 const water = new Water(renderer);
 scene.add(water.mesh);
 world.water = water;
 world.camera = camera;
+water.setDepthMapFromZones(world.zones, { waterY: WATER_Y, maxDepth: WATER_MAX_DEPTH });
 water.setAtmosphere(scene.fog.color, scene.fog.density);
 water.setSun(new THREE.Vector3(14, 80, 8).normalize(), new THREE.Color(0xffeed2));
 
@@ -112,6 +130,8 @@ function resize() {
   water.setSize(
     Math.min(2048, Math.max(320, Math.floor(buf.x * scale))),
     Math.min(2048, Math.max(180, Math.floor(buf.y * scale))),
+    buf.x,
+    buf.y,
   );
   world.setViewport(h, camera.fov, renderer.getPixelRatio());
 }
@@ -267,6 +287,16 @@ function animate(now) {
   player.update(dt, elapsed);
   water.update(elapsed, camera);
   world.update(elapsed, dt);
+
+  /* refract the underwater scene; hide additive air effects for this pass */
+  const shaftVisibility = world.shafts.meshes.map((m) => m.visible);
+  world.shafts.meshes.forEach((m) => { m.visible = false; });
+  const dustVisible = world.dust.points.visible;
+  world.dust.points.visible = false;
+  water.renderRefraction(renderer, scene, camera);
+  world.shafts.meshes.forEach((m, i) => { m.visible = shaftVisibility[i]; });
+  world.dust.points.visible = dustVisible;
+
   post.update(elapsed);
   post.render();
 

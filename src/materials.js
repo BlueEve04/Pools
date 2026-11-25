@@ -15,6 +15,45 @@ function setMetricRepeat(set, meters, anisotropy) {
   }
 }
 
+/**
+ * Tint opaque surfaces that are below the water plane. This makes submerged
+ * stair risers / wall bases read as underwater even though the water itself
+ * is only a single surface.
+ */
+export function applyUnderwaterTint(material, waterY = 0) {
+  if (!material || material.userData.underwaterTint) return;
+  material.userData.underwaterTint = true;
+  const prevCompile = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    if (prevCompile) prevCompile(shader, renderer);
+    shader.uniforms.uWaterLevel = { value: waterY };
+    shader.vertexShader = `varying vec3 vUWPos;
+` + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+  vUWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`
+    );
+    shader.fragmentShader = `uniform float uWaterLevel;
+varying vec3 vUWPos;
+` + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      `#include <opaque_fragment>
+      {
+        float uwDepth = max(0.0, uWaterLevel - vUWPos.y);
+        float uwFade = smoothstep(0.0, 0.05, uwDepth);
+        float uwK = clamp(uwDepth / 0.7, 0.0, 1.0);
+        float uwAmt = uwFade * (0.28 + 0.34 * uwK);
+        vec3 uwTint = vec3(0.52, 0.84, 0.81);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * uwTint, uwAmt);
+      }`
+    );
+  };
+  material.customProgramCacheKey = () => 'underwater-v1-' + waterY;
+  material.needsUpdate = true;
+}
+
 export function createMaterials(renderer) {
   const anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 

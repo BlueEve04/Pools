@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './textures.js';
+import { WATER_Y } from './config.js';
 import {
   createLightShaft,
   LightShafts,
@@ -9,7 +10,6 @@ import {
 } from './effects.js';
 
 const BASE_Y = -0.9;
-export const WATER_Y = 0;
 
 export const FLOORS = {
   hall: -0.55,
@@ -363,7 +363,7 @@ function addWallCaustics({ parent, material, planes, cylinders }) {
     const geo = new THREE.PlaneGeometry(p.w, p.h);
     metricPlaneUV(geo, p.w, p.h);
     const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(p.x, p.y ?? p.h / 2, p.z);
+    mesh.position.set(p.x, WATER_Y + (p.y ?? p.h / 2), p.z);
     mesh.rotation.y = p.rotY ?? 0;
     mesh.renderOrder = 1;
     parent.add(mesh);
@@ -372,7 +372,7 @@ function addWallCaustics({ parent, material, planes, cylinders }) {
     const geo = new THREE.CylinderGeometry(c.r, c.r, c.h, c.seg ?? 32, 1, true, c.thetaStart ?? 0, c.thetaLength ?? Math.PI * 2);
     metricCylinderUV(geo, c.r, c.h, c.arcFraction ?? 1);
     const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(c.x, c.y ?? c.h / 2, c.z);
+    mesh.position.set(c.x, WATER_Y + (c.y ?? c.h / 2), c.z);
     mesh.renderOrder = 1;
     parent.add(mesh);
   }
@@ -530,6 +530,7 @@ function addBench(parent, materials, woodMat, colliders) {
  *  World
  * ------------------------------------------------------------------ */
 
+
 export function buildWorld(scene, materials) {
   const root = new THREE.Group();
   scene.add(root);
@@ -620,6 +621,13 @@ export function buildWorld(scene, materials) {
     root.add(floor);
     addCausticPlane(root, causticMat, {
       x: 0, z: 0, w: 46, d: 28, y: FLOORS.hall + 0.02,
+    });
+    /* submerged stair treads */
+    addCausticPlane(root, causticMat, {
+      x: 0, z: 9.45, w: 12.9, d: 0.48, y: -0.104,
+    });
+    addCausticPlane(root, causticMat, {
+      x: 0, z: 8.95, w: 12.9, d: 0.48, y: -0.334,
     });
     zones.push({ minX: -23.4, maxX: 23.4, minZ: -14.8, maxZ: 14.8, y: FLOORS.hall });
   }
@@ -715,7 +723,7 @@ export function buildWorld(scene, materials) {
         root.add(cap);
 
         const band = new THREE.Mesh(bandGeo, materials.accent);
-        band.position.set(x, 0.15, z);
+        band.position.set(x, WATER_Y + 0.15, z);
         band.receiveShadow = true;
         root.add(band);
 
@@ -951,6 +959,9 @@ export function buildWorld(scene, materials) {
     const step = makeBox(6.0, 0.2, 1.6, materials.floor, 0, -0.55, -27.4, { cast: false });
     root.add(step);
     zones.push({ minX: -3, maxX: 3, minZ: -28.2, maxZ: -27.0, y: FLOORS.threshold });
+    addCausticPlane(root, causticMat, {
+      x: 0, z: -27.4, w: 5.9, d: 1.5, y: FLOORS.threshold + 0.004,
+    });
   }
 
   const ROT = { x: 0, z: -35, r: 8, top: 6.5 };
@@ -1095,7 +1106,7 @@ export function buildWorld(scene, materials) {
   {
     const bandH = 0.27;
     const bandT = 0.03;
-    const bandY = 0.145;
+    const bandY = WATER_Y + 0.145;
     const band = (w, d, x, z) => {
       const m = makeBox(w, bandH, d, materials.accent, x, bandY, z, { cast: false });
       root.add(m);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
+import { WATER_Y, WATER_MAX_DEPTH } from './config.js';
 
 const MAX_RIPPLES = 8;
 
@@ -19,10 +20,18 @@ const WaterShader = {
     uRipples: {
       value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, 0, 0, 0)),
     },
-    uDistortion: { value: 0.052 },
+    uDistortion: { value: 0.1 },
     uFogColor: { value: new THREE.Color(0xd9e9e4) },
     uFogDensity: { value: 0.0052 },
     uAlpha: { value: 0.8 },
+    uDepthMap: { value: null },
+    uMapMin: { value: new THREE.Vector2(0, 0) },
+    uMapSize: { value: new THREE.Vector2(1, 1) },
+    uMaxDepth: { value: WATER_MAX_DEPTH },
+    uShoreColor: { value: new THREE.Color(0xa9eadf) },
+    tRefraction: { value: null },
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uRefractionDistortion: { value: 0.14 },
   },
 
   vertexShader: /* glsl */ `
@@ -52,6 +61,14 @@ const WaterShader = {
     uniform vec3 uFogColor;
     uniform float uFogDensity;
     uniform float uAlpha;
+    uniform sampler2D uDepthMap;
+    uniform vec2 uMapMin;
+    uniform vec2 uMapSize;
+    uniform float uMaxDepth;
+    uniform vec3 uShoreColor;
+    uniform sampler2D tRefraction;
+    uniform vec2 uResolution;
+    uniform float uRefractionDistortion;
 
     varying vec4 vReflectCoord;
     varying vec3 vWorldPos;
@@ -116,6 +133,11 @@ const WaterShader = {
 
     void main() {
       vec2 p = vWorldPos.xz;
+
+      vec2 depthUv = ( p - uMapMin ) / uMapSize;
+      float depth = texture2D( uDepthMap, clamp( depthUv, vec2( 0.0 ), vec2( 1.0 ) ) ).r * uMaxDepth;
+      if ( depth < 0.002 ) discard;
+
       vec3 n = waterNormal( p, uTime );
 
       vec2 uv = vReflectCoord.xy / vReflectCoord.w;
@@ -128,26 +150,40 @@ const WaterShader = {
       float fres = pow( 1.0 - cosTheta, 2.25 );
       float reflAmount = clamp( 0.07 + 0.95 * fres, 0.0, 1.0 );
 
-      float bodyVar = fbm2( p * 0.16 + vec2( 3.1, 7.7 ) );
-      vec3 body = mix( uDeepColor, uShallowColor, 0.36 + bodyVar * 0.36 );
-      body *= 1.03;
+      float shallowAtten = smoothstep( 0.015, 0.24, depth );
+      reflAmount *= mix( 0.12, 1.0, shallowAtten );
+
+      /* screen-space refraction of the scene below the surface */
+      vec2 screenUv = gl_FragCoord.xy / uResolution;
+      float refractScale = mix( 0.45, 1.0, smoothstep( 0.02, 0.4, depth ) );
+      vec2 refrUv = clamp(
+        screenUv + n.xz * uRefractionDistortion * refractScale,
+        vec2( 0.002 ), vec2( 0.998 )
+      );
+      vec3 refracted = texture2D( tRefraction, refrUv ).rgb;
+
+      /* depth absorption */
+      float depthF = smoothstep( 0.0, 0.75, depth );
+      vec3 absorb = mix( vec3( 0.82, 0.97, 0.94 ), vec3( 0.40, 0.76, 0.75 ), depthF );
+      refracted *= absorb;
+      refracted = mix( refracted, uShallowColor, 0.08 + 0.10 * depthF );
 
       vec3 halfDir = normalize( uSunDir + viewDir );
       float ndh = max( dot( n, halfDir ), 0.0 );
       float spec = pow( ndh, 900.0 ) + pow( ndh, 120.0 ) * 0.10;
       vec3 specular = uSunColor * spec * 3.0;
 
-      vec3 col = mix( body, reflection * vec3( 0.78, 0.92, 0.92 ), reflAmount );
+      vec3 reflTint = mix( vec3( 0.55, 0.82, 0.80 ), vec3( 0.78, 0.92, 0.92 ), shallowAtten );
+      vec3 col = mix( refracted, reflection * reflTint, reflAmount );
       col += specular * ( 0.30 + 0.70 * fres );
 
-      float alpha = mix( 0.56, 0.94, reflAmount );
-      alpha = clamp( alpha + spec * 0.5, 0.0, 0.985 );
+      float shore = 1.0 - smoothstep( 0.004, 0.10, depth );
+      float foamNoise = fbm2( p * 5.0 + vec2( uTime * 0.2, -uTime * 0.12 ) );
+      float foam = shore * ( 0.55 + 0.45 * foamNoise );
+      col = mix( col, vec3( 0.94, 1.0, 0.97 ), foam * 0.65 );
 
-      float dist = length( uCameraPos - vWorldPos );
-      float fogF = 1.0 - exp( -pow( uFogDensity * dist, 2.0 ) );
-      col = mix( col, uFogColor, clamp( fogF, 0.0, 1.0 ) );
-
-      gl_FragColor = vec4( col, alpha * uAlpha );
+      /* the water is opaque; the refraction texture already contains the floor */
+      gl_FragColor = vec4( col, 1.0 );
     }
   `,
 };
@@ -168,7 +204,7 @@ export class Water {
     });
 
     reflector.rotation.x = -Math.PI / 2;
-    reflector.position.set(3, 0, -14);
+    reflector.position.set(3, WATER_Y, -14);
     reflector.renderOrder = 2;
     reflector.material.transparent = true;
     reflector.material.depthWrite = false;
@@ -178,7 +214,95 @@ export class Water {
     this.uniforms = reflector.material.uniforms;
     this.uniforms.color.value = new THREE.Color(0x7f7f7f);
     this.rippleSlots = this.uniforms.uRipples.value;
-    this.waterHeight = 0;
+    this.waterHeight = WATER_Y;
+    this.depthTexture = null;
+
+    this.refractionTarget = new THREE.WebGLRenderTarget(512, 512, {
+      type: THREE.HalfFloatType,
+      depthBuffer: true,
+    });
+    this.refractionTarget.texture.name = 'PoolWaterRefraction';
+    this.uniforms.tRefraction.value = this.refractionTarget.texture;
+  }
+
+  /**
+   * Render the scene without the water into the refraction texture.
+   * Call once per frame before the main composer render.
+   */
+  renderRefraction(renderer, scene, camera) {
+    const prevRT = renderer.getRenderTarget();
+    const prevXr = renderer.xr.enabled;
+    const prevShadowAuto = renderer.shadowMap.autoUpdate;
+
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    this.mesh.visible = false;
+
+    renderer.setRenderTarget(this.refractionTarget);
+    renderer.state.buffers.depth.setMask(true);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    this.mesh.visible = true;
+    renderer.xr.enabled = prevXr;
+    renderer.shadowMap.autoUpdate = prevShadowAuto;
+    renderer.setRenderTarget(prevRT);
+  }
+
+  /**
+   * Build a top-down floor-depth map from walkable zones. The water shader
+   * uses it to discard dry areas and shade shallow steps differently.
+   */
+  setDepthMapFromZones(zones, { waterY = WATER_Y, maxDepth = WATER_MAX_DEPTH, size = 1024, padding = 2.5 } = {}) {
+    if (!zones || zones.length === 0) return;
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const z of zones) {
+      if (z.minX < minX) minX = z.minX;
+      if (z.maxX > maxX) maxX = z.maxX;
+      if (z.minZ < minZ) minZ = z.minZ;
+      if (z.maxZ > maxZ) maxZ = z.maxZ;
+    }
+    minX -= padding; maxX += padding;
+    minZ -= padding; maxZ += padding;
+    const spanX = maxX - minX;
+    const spanZ = maxZ - minZ;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, size, size);
+
+    const sorted = [...zones].sort((a, b) => a.y - b.y);
+    for (const zone of sorted) {
+      const depth = Math.max(0, Math.min(maxDepth, waterY - zone.y));
+      const v = Math.round((depth / maxDepth) * 255);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      const x0 = ((zone.minX - minX) / spanX) * size;
+      const y0 = ((zone.minZ - minZ) / spanZ) * size;
+      const x1 = ((zone.maxX - minX) / spanX) * size;
+      const y1 = ((zone.maxZ - minZ) / spanZ) * size;
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.flipY = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+
+    this.uniforms.uDepthMap.value = tex;
+    this.uniforms.uMapMin.value.set(minX, minZ);
+    this.uniforms.uMapSize.value.set(spanX, spanZ);
+    this.uniforms.uMaxDepth.value = maxDepth;
+    this.depthTexture = tex;
+    this.depthBounds = { minX, minZ, maxX, maxZ };
   }
 
   addRipple(x, z, strength = 1.0) {
@@ -203,8 +327,12 @@ export class Water {
     this.uniforms.uCameraPos.value.copy(camera.position);
   }
 
-  setSize(width, height) {
+  setSize(width, height, screenWidth = width, screenHeight = height) {
+    const w = Math.max(256, Math.floor(width));
+    const h = Math.max(180, Math.floor(height));
     const rt = this.mesh.getRenderTarget();
-    if (rt) rt.setSize(Math.max(256, Math.floor(width)), Math.max(256, Math.floor(height)));
+    if (rt) rt.setSize(w, h);
+    this.refractionTarget.setSize(w, h);
+    this.uniforms.uResolution.value.set(screenWidth, screenHeight);
   }
 }

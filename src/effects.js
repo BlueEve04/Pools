@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createDustTexture, mulberry32 } from './textures.js';
+import { WATER_Y } from './config.js';
 
 /* ------------------------------------------------------------------ *
  *  Volumetric light shafts
@@ -253,7 +254,7 @@ export function createLifeRing(x = 32.5, z = 2.0) {
   mesh.receiveShadow = true;
 
   const group = new THREE.Group();
-  group.position.set(x, 0.05, z);
+  group.position.set(x, WATER_Y + 0.05, z);
   group.add(mesh);
 
   let rippleTimer = 0;
@@ -261,7 +262,7 @@ export function createLifeRing(x = 32.5, z = 2.0) {
   return {
     group,
     update(t, dt, water) {
-      group.position.y = 0.035 + Math.sin(t * 0.65) * 0.018;
+      group.position.y = WATER_Y + 0.035 + Math.sin(t * 0.65) * 0.018;
       group.rotation.y = t * 0.035;
       group.rotation.x = Math.sin(t * 0.44) * 0.025;
       group.rotation.z = Math.cos(t * 0.37) * 0.025;

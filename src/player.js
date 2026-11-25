@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { WATER_Y } from './config.js';
 
 const EYE_HEIGHT = 1.68;
 const RADIUS = 0.32;
 const MAX_STEP = 0.52;
+const WATER_LINE = WATER_Y - 0.06;
 
 export class Player {
   constructor({ camera, domElement, world, spawn, onStep }) {
@@ -27,7 +29,7 @@ export class Player {
     this.bobPhase = 0;
     this.bobAmp = 0;
     this.stepDist = 0;
-    this.inWater = spawn.y < -0.06;
+    this.inWater = spawn.y < WATER_LINE;
     this.falling = false;
     this.fallDistance = 0;
 
@@ -70,7 +72,7 @@ export class Player {
     this.pos.z = z;
     const g = groundY !== null ? groundY : this.groundAt(x, z);
     this.groundY = g;
-    this.inWater = g < -0.06;
+    this.inWater = g < WATER_LINE;
     this.velocity.set(0, 0);
     this.updateCamera(0);
   }
@@ -193,7 +195,7 @@ export class Player {
 
     const targetGround = this.groundAt(this.pos.x, this.pos.z);
     const wasInWater = this.inWater;
-    this.inWater = targetGround < -0.06;
+    this.inWater = targetGround < WATER_LINE;
 
     /* falling splash */
     if (targetGround < this.groundY - 0.32) {
